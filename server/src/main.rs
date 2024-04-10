@@ -2,10 +2,18 @@ use actix::{Actor, StreamHandler};
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
 use tracing_actix_web::TracingLogger;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     HttpServer::new(|| {
         App::new()
@@ -24,6 +32,7 @@ async fn index() -> impl Responder {
 }
 
 async fn socket(req: HttpRequest, stream: web::Payload) -> impl Responder {
+    tracing::info!("request: {:?}", req);
     let server = WebSocket::new();
     ws::start(server, &req, stream)
 }
