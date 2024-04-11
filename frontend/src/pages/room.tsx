@@ -3,18 +3,25 @@ import { useEffect, useRef, useState } from "react";
 
 export default function Room() {
   const [room, setRoom] = useState("");
-  const [socket, setSocket] = useState<WebSocket | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+
+  const socket = useRef<WebSocket | null>(null);
 
   const router = useRouter();
   const videoRef = useRef<any>();
+
+  useEffect(() => {
+    return () => {
+      socket.current?.close();
+    };
+  }, []);
 
   useEffect(() => {
     if (router.query.room) {
       setRoom(router.query.room as string);
       const url = process.env.NEXT_PUBLIC_WS_URL as string;
       const ws = new WebSocket(`${url}?room=${router.query.room}`);
-      setSocket(ws);
+      socket.current = ws;
     }
   }, [router.query.room]);
 
