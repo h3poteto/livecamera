@@ -7,8 +7,9 @@ use std::{
 use mediasoup::{
     router::{Router, RouterOptions},
     rtp_parameters::{RtcpFeedback, RtpCodecCapability, RtpCodecParametersParameters},
-    worker::Worker,
 };
+
+use crate::worker::WorkerSet;
 
 pub struct RoomOwner {
     pub rooms: HashMap<String, Arc<Room>>,
@@ -25,7 +26,7 @@ impl RoomOwner {
         self.rooms.get(&id).cloned()
     }
 
-    pub async fn create_new_room(&mut self, id: String, worker: Arc<Worker>) -> Arc<Room> {
+    pub async fn create_new_room(&mut self, id: String, worker: Arc<WorkerSet>) -> Arc<Room> {
         let room = Room::new(id.clone(), worker).await;
         let a = Arc::new(room);
         self.rooms.insert(id.clone(), a.clone());
@@ -34,20 +35,24 @@ impl RoomOwner {
 }
 
 pub struct Room {
-    id: String,
-    router: Router,
+    pub id: String,
+    pub router: Router,
+    pub worker: Arc<WorkerSet>,
 }
 
 impl Room {
-    pub async fn new(room_id: String, worker: Arc<Worker>) -> Self {
+    pub async fn new(room_id: String, worker: Arc<WorkerSet>) -> Self {
         let router = worker
+            .worker
             .create_router(RouterOptions::new(media_codecs()))
             .await
             .expect("Failed to create router");
+
         tracing::info!("Room created: {}", room_id);
         Room {
             id: room_id,
             router,
+            worker,
         }
     }
 }

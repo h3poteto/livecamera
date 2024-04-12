@@ -68,14 +68,14 @@ async fn socket(
     match find {
         Some(room) => {
             tracing::info!("Room found, so joining it: {}", room_id);
-            let server = websocket::WebSocket::new(room);
+            let server = websocket::WebSocket::new(room).await;
             ws::start(server, &req, stream)
         }
         None => {
             let owner = room_owner.clone();
             let mut owner = owner.lock().unwrap();
             let room = owner.create_new_room(room_id.to_string(), worker).await;
-            let server = websocket::WebSocket::new(room);
+            let server = websocket::WebSocket::new(room).await;
             ws::start(server, &req, stream)
         }
     }
