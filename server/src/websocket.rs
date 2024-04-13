@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::room;
 
+#[derive(Debug)]
 struct Transports {
     producer: WebRtcTransport,
     consumer: WebRtcTransport,
@@ -74,7 +75,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocket {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Pong(_)) => tracing::info!("Pong received"),
-            Ok(ws::Message::Text(text)) => ctx.text(text),
+            Ok(ws::Message::Text(text)) => match serde_json::from_str::<ReceivedMessage>(&text) {
+                Ok(message) => {
+                    ctx.address().do_send(message);
+                }
+                Err(error) => {
+                    tracing::error!("Failed to parse client message: {}\n{}", error, text);
+                }
+            },
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
             Ok(ws::Message::Close(reason)) => ctx.close(reason),
             _ => (),
@@ -87,6 +95,8 @@ impl Handler<ReceivedMessage> for WebSocket {
 
     fn handle(&mut self, msg: ReceivedMessage, ctx: &mut Self::Context) {
         let address = ctx.address();
+
+        tracing::debug!("Received message: {:?}", msg);
 
         match msg {
             ReceivedMessage::Init => {
@@ -106,9 +116,9 @@ impl Handler<ReceivedMessage> for WebSocket {
                     },
                     router_rtp_capabilities,
                 };
-                ctx.text(serde_json::to_string(&message).unwrap());
+                address.do_send(message);
             }
-            ReceivedMessage::RtpCapabilities { rtp_capabilities } => {
+            ReceivedMessage::SendRtpCapabilities { rtp_capabilities } => {
                 self.client_rtp_capabilities.replace(rtp_capabilities);
             }
             ReceivedMessage::ConnectProducerTransport { dtls_parameters } => {
@@ -265,14 +275,14 @@ impl Handler<InternalMessage> for WebSocket {
 }
 
 // messages
-#[derive(Deserialize, Message)]
+#[derive(Deserialize, Message, Debug)]
 #[serde(tag = "action")]
 #[rtype(result = "()")]
 enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
     Init,
     #[serde(rename_all = "camelCase")]
-    RtpCapabilities { rtp_capabilities: RtpCapabilities },
+    SendRtpCapabilities { rtp_capabilities: RtpCapabilities },
     #[serde(rename_all = "camelCase")]
     ConnectProducerTransport { dtls_parameters: DtlsParameters },
     #[serde(rename_all = "camelCase")]
@@ -288,7 +298,7 @@ enum ReceivedMessage {
     Resume { consumer_id: ConsumerId },
 }
 
-#[derive(Serialize, Message)]
+#[derive(Serialize, Message, Debug)]
 #[serde(tag = "action")]
 #[rtype(result = "()")]
 enum SendingMessage {
@@ -313,7 +323,7 @@ enum SendingMessage {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct TransportOptions {
     id: TransportId,
@@ -322,7 +332,7 @@ struct TransportOptions {
     ice_parameters: IceParameters,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
 enum InternalMessage {
     SaveProducer(Producer),
