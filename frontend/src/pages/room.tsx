@@ -1,5 +1,7 @@
 import WebSocketClient from "@/socket/client";
 import {
+  Consumer,
+  ConsumerOptions,
   Device,
   DtlsParameters,
   MediaKind,
@@ -10,24 +12,24 @@ import {
   TransportOptions,
 } from "mediasoup-client/lib/types";
 import { useRouter } from "next/router";
-import { useEffect, useRef, useState } from "react";
+import { RefObject, createRef, useEffect, useRef, useState } from "react";
 
 export default function Room() {
+  const router = useRouter();
+
   const [room, setRoom] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [device, setDevice] = useState<Device | null>(null);
-  const [producerTransport, setProducerTransport] = useState<Transport | null>(
-    null,
-  );
-  const [consumerTransport, setConsumerTransport] = useState<Transport | null>(
-    null,
-  );
   const [producer, setProducer] = useState<Producer | null>(null);
+  const [consumers, setConsumers] = useState<{ [key: string]: Consumer }>({});
 
   const socket = useRef<WebSocketClient | null>(null);
-
-  const router = useRouter();
-  const videoRef = useRef<any>();
+  const producerTransport = useRef<Transport | null>(null);
+  const consumerTransport = useRef<Transport | null>(null);
+  const producerRef = useRef<HTMLVideoElement>(null);
+  const consumerRefs = useRef<{
+    [key: string]: RefObject<HTMLVideoElement>;
+  }>({});
 
   useEffect(() => {
     const d = new Device();
@@ -53,6 +55,16 @@ export default function Room() {
     }
   }, [router.query.room]);
 
+  useEffect(() => {
+    Object.keys(consumers).forEach((key) => {
+      const consumer = consumers[key];
+      const ref = consumerRefs.current[key];
+      if (ref.current) {
+        ref.current.srcObject = new MediaStream([consumer.track]);
+      }
+    });
+  }, [consumers]);
+
   const messageHandler = async (e: MessageEvent) => {
     const message: ServerMessage = JSON.parse(e.data);
     console.debug("Message received", message);
@@ -62,81 +74,134 @@ export default function Room() {
         if (!device) {
           return;
         }
-        await device.load({
-          routerRtpCapabilities: message.routerRtpCapabilities,
-        });
+        if (!device.loaded) {
+          await device.load({
+            routerRtpCapabilities: message.routerRtpCapabilities,
+          });
+        }
         socket.current?.send({
           action: "SendRtpCapabilities",
           rtpCapabilities: device.rtpCapabilities,
         });
 
-        const pt = device.createSendTransport(message.producerTransportOptions);
-        setProducerTransport(pt);
-        const ct = device.createRecvTransport(message.consumerTransportOptions);
-        setConsumerTransport(ct);
+        producerTransport.current = device.createSendTransport(
+          message.producerTransportOptions,
+        );
+        consumerTransport.current = device.createRecvTransport(
+          message.consumerTransportOptions,
+        );
 
-        pt.on("connect", ({ dtlsParameters }, success, failed) => {
-          socket.current
-            ?.invoke(
-              {
-                action: "ConnectProducerTransport",
-                dtlsParameters,
-              } as ConnectProducerTransport,
-              "ConnectedProducerTransport",
-            )
-            .then((e: MessageEvent) => {
-              const m = JSON.parse(e.data) as ConnectedProducerTransport;
-              if (m.action === "ConnectedProducerTransport") {
-                console.debug("Producer transport connected");
-                success();
-              } else {
-                failed(new Error("Invalid response"));
-              }
-            })
-            .catch((err) => failed(err));
-        }).on("produce", ({ kind, rtpParameters }, success, failed) => {
-          socket.current
-            ?.invoke(
-              {
-                action: "Produce",
-                kind,
-                rtpParameters,
-              } as Produce,
-              "Produced",
-            )
-            .then((e: MessageEvent) => {
-              const m = JSON.parse(e.data) as Produced;
-              if (m.action === "Produced") {
-                console.debug("Produced", m.id);
-                success({ id: m.id });
-              } else {
-                failed(new Error("Invalid response"));
-              }
-            })
-            .catch((err) => failed(err));
+        producerTransport.current
+          .on("connect", ({ dtlsParameters }, success, failed) => {
+            socket.current
+              ?.invoke(
+                {
+                  action: "ConnectProducerTransport",
+                  dtlsParameters,
+                } as ConnectProducerTransport,
+                "ConnectedProducerTransport",
+              )
+              .then((e: MessageEvent) => {
+                const m = JSON.parse(e.data) as ConnectedProducerTransport;
+                if (m.action === "ConnectedProducerTransport") {
+                  console.debug("Producer transport connected");
+                  success();
+                } else {
+                  failed(new Error("Invalid response"));
+                }
+              })
+              .catch((err) => failed(err));
+          })
+          .on("produce", ({ kind, rtpParameters }, success, failed) => {
+            socket.current
+              ?.invoke(
+                {
+                  action: "Produce",
+                  kind,
+                  rtpParameters,
+                } as Produce,
+                "Produced",
+              )
+              .then((e: MessageEvent) => {
+                const m = JSON.parse(e.data) as Produced;
+                if (m.action === "Produced") {
+                  console.debug("Produced", m.id);
+                  success({ id: m.id });
+                } else {
+                  failed(new Error("Invalid response"));
+                }
+              })
+              .catch((err) => failed(err));
+          });
+
+        consumerTransport.current.on(
+          "connect",
+          ({ dtlsParameters }, success, failed) => {
+            socket.current
+              ?.invoke(
+                {
+                  action: "ConnectConsumerTransport",
+                  dtlsParameters,
+                } as ConnectConsumerTransport,
+                "ConnectedConsumerTransport",
+              )
+              .then((e: MessageEvent) => {
+                const m = JSON.parse(e.data) as ConnectedConsumerTransport;
+                if (m.action === "ConnectedConsumerTransport") {
+                  console.debug("Consumer transport connected");
+                  success();
+                } else {
+                  failed(new Error("Invalid response"));
+                }
+              })
+              .catch((err) => failed(err));
+          },
+        );
+
+        break;
+      }
+      case "NewProducers": {
+        const ids = message.ids;
+        ids.forEach(async (id) => {
+          const e: MessageEvent = await socket.current?.invoke(
+            {
+              action: "Consume",
+              producerId: id,
+            } as Consume,
+            "Consumed",
+          );
+          const m = JSON.parse(e.data) as Consumed;
+          if (m.action !== "Consumed") {
+            return;
+          }
+          console.log("consumer transport", consumerTransport);
+          const consumer = await consumerTransport.current?.consume({
+            id: m.id,
+            producerId: m.producerId,
+            rtpParameters: m.rtpParameters,
+            kind: m.kind,
+          } as ConsumerOptions);
+          if (!consumer) {
+            console.error("Failed to consume");
+            return;
+          }
+          console.debug("Consumed", m.id);
+          consumer.on("transportclose", () => {
+            console.debug("Consumer transport closed");
+          });
+
+          socket.current?.send({
+            action: "Resume",
+            consumerId: consumer.id,
+          } as Resume);
+
+          consumerRefs.current[m.id] = createRef<HTMLVideoElement>();
+          setConsumers((prev) => {
+            return Object.assign({}, prev, {
+              [m.id]: consumer,
+            });
+          });
         });
-
-        ct.on("connect", ({ dtlsParameters }, success, failed) => {
-          socket.current
-            ?.invoke(
-              {
-                action: "ConnectConsumerTransport",
-                dtlsParameters,
-              } as ConnectConsumerTransport,
-              "ConnectedConsumerTransport",
-            )
-            .then((e: MessageEvent) => {
-              const m = JSON.parse(e.data) as ConnectedConsumerTransport;
-              if (m.action === "ConnectedConsumerTransport") {
-                console.debug("Consumer transport connected");
-                success();
-              } else {
-                failed(new Error("Invalid response"));
-              }
-            })
-            .catch((err) => failed(err));
-        });
-
         break;
       }
     }
@@ -148,15 +213,19 @@ export default function Room() {
       audio: true,
     });
     setStream(s);
-    videoRef.current.srcObject = s;
+    if (producerRef.current) {
+      producerRef.current.srcObject = s;
+    }
 
     if (!producerTransport) {
       return;
     }
-    const p = await producerTransport.produce({
+    const p = await producerTransport.current?.produce({
       track: s.getVideoTracks()[0],
     });
-    setProducer(p);
+    if (p) {
+      setProducer(p);
+    }
   };
 
   const stop = () => {
@@ -166,7 +235,9 @@ export default function Room() {
     }
     stream?.getTracks().forEach((track) => track.stop());
     setStream(null);
-    videoRef.current.srcObject = null;
+    if (producerRef.current) {
+      producerRef.current.srcObject = null;
+    }
   };
 
   return (
@@ -189,8 +260,13 @@ export default function Room() {
         </button>
       </div>
       <h3>My Screen</h3>
-      <video autoPlay muted ref={videoRef} width={480}></video>
+      <video autoPlay muted ref={producerRef} width={480}></video>
       <h3>Receiving</h3>
+      {Object.keys(consumerRefs.current).map((key) => (
+        <div key={key}>
+          <video autoPlay ref={consumerRefs.current[key]} width={480}></video>
+        </div>
+      ))}
     </div>
   );
 }
@@ -211,6 +287,11 @@ type Produced = {
   id: string;
 };
 
+type NewProducers = {
+  action: "NewProducers";
+  ids: Array<string>;
+};
+
 type ConnectedConsumerTransport = {
   action: "ConnectedConsumerTransport";
 };
@@ -227,6 +308,7 @@ type ServerMessage =
   | ServerInit
   | ConnectedProducerTransport
   | Produced
+  | NewProducers
   | ConnectedConsumerTransport
   | Consumed;
 

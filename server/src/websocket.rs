@@ -61,12 +61,16 @@ impl WebSocket {
 impl Actor for WebSocket {
     type Context = ws::WebsocketContext<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         tracing::info!("WebSocket started");
+        let address = ctx.address();
+        self.room.add_user(address);
     }
 
-    fn stopped(&mut self, _ctx: &mut Self::Context) {
+    fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::info!("WebSocket stopped");
+        let address = ctx.address();
+        self.room.remove_user(address);
     }
 }
 
@@ -120,6 +124,9 @@ impl Handler<ReceivedMessage> for WebSocket {
             }
             ReceivedMessage::SendRtpCapabilities { rtp_capabilities } => {
                 self.client_rtp_capabilities.replace(rtp_capabilities);
+                // Send already produced producers to the client
+                let ids = self.producers.iter().map(|p| p.id()).collect();
+                address.do_send(SendingMessage::NewProducers { ids });
             }
             ReceivedMessage::ConnectProducerTransport { dtls_parameters } => {
                 let transport = self.transports.producer.clone();
@@ -154,6 +161,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                             let id = producer.id();
                             address.do_send(SendingMessage::Produced { id });
                             address.do_send(InternalMessage::SaveProducer(producer));
+
                             tracing::info!("{:?} producer created: {:?}", kind, id);
                         }
                         Err(err) => {
@@ -261,7 +269,15 @@ impl Handler<InternalMessage> for WebSocket {
         match message {
             InternalMessage::SaveProducer(producer) => {
                 let producer = Arc::new(producer);
+                let id = producer.id();
+                let room = self.room.clone();
+                _ = producer.on_close(move || {
+                    room.remove_producer(id);
+                });
+                let cloned = producer.clone();
+                self.room.add_producer(id, cloned);
                 self.producers.push(producer);
+                self.room.broadcast_producer(id);
             }
             InternalMessage::SaveConsumer(consumer) => {
                 let consumer = Arc::new(consumer);
@@ -301,7 +317,7 @@ enum ReceivedMessage {
 #[derive(Serialize, Message, Debug)]
 #[serde(tag = "action")]
 #[rtype(result = "()")]
-enum SendingMessage {
+pub enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     Init {
         consumer_transport_options: TransportOptions,
@@ -312,6 +328,8 @@ enum SendingMessage {
     ConnectedProducerTransport,
     #[serde(rename_all = "camelCase")]
     Produced { id: ProducerId },
+    #[serde(rename_all = "camelCase")]
+    NewProducers { ids: Vec<ProducerId> },
     #[serde(rename_all = "camelCase")]
     ConnectedConsumerTransport,
     #[serde(rename_all = "camelCase")]
@@ -325,7 +343,7 @@ enum SendingMessage {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct TransportOptions {
+pub(crate) struct TransportOptions {
     id: TransportId,
     dtls_parameters: DtlsParameters,
     ice_candidates: Vec<IceCandidate>,
