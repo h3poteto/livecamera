@@ -58,6 +58,12 @@ export default function Room() {
   useEffect(() => {
     Object.keys(consumers).forEach((key) => {
       const consumer = consumers[key];
+      if (!consumer) {
+        const ref = consumerRefs.current;
+        delete ref[key];
+        consumerRefs.current = Object.assign({}, ref);
+        return;
+      }
       const ref = consumerRefs.current[key];
       if (ref.current) {
         ref.current.srcObject = new MediaStream([consumer.track]);
@@ -174,7 +180,6 @@ export default function Room() {
           if (m.action !== "Consumed") {
             return;
           }
-          console.log("consumer transport", consumerTransport);
           const consumer = await consumerTransport.current?.consume({
             id: m.id,
             producerId: m.producerId,
@@ -189,17 +194,34 @@ export default function Room() {
           consumer.on("transportclose", () => {
             console.debug("Consumer transport closed");
           });
+          consumer.on("trackended", () => {
+            console.debug("Consumer track ended");
+          });
 
           socket.current?.send({
             action: "Resume",
             consumerId: consumer.id,
           } as Resume);
 
-          consumerRefs.current[m.id] = createRef<HTMLVideoElement>();
+          consumerRefs.current[m.producerId] = createRef<HTMLVideoElement>();
           setConsumers((prev) => {
             return Object.assign({}, prev, {
-              [m.id]: consumer,
+              [m.producerId]: consumer,
             });
+          });
+        });
+        break;
+      }
+      case "ProducerClosed": {
+        const id = message.id;
+        setConsumers((prev) => {
+          const consumer = prev[id];
+          if (consumer) {
+            consumer.close();
+          }
+
+          return Object.assign({}, prev, {
+            [id]: undefined,
           });
         });
         break;
@@ -232,6 +254,7 @@ export default function Room() {
     if (producer) {
       producer.close();
       setProducer(null);
+      socket.current?.send({ action: "ProducerClosed", id: producer.id });
     }
     stream?.getTracks().forEach((track) => track.stop());
     setStream(null);
@@ -292,6 +315,11 @@ type NewProducers = {
   ids: Array<string>;
 };
 
+type ProducerClosed = {
+  action: "ProducerClosed";
+  id: string;
+};
+
 type ConnectedConsumerTransport = {
   action: "ConnectedConsumerTransport";
 };
@@ -309,6 +337,7 @@ type ServerMessage =
   | ConnectedProducerTransport
   | Produced
   | NewProducers
+  | ProducerClosed
   | ConnectedConsumerTransport
   | Consumed;
 
@@ -352,6 +381,7 @@ type ClientMessage =
   | SendRtpCapabilities
   | ConnectProducerTransport
   | Produce
+  | ProducerClosed
   | ConnectConsumerTransport
   | Consume
   | Resume;

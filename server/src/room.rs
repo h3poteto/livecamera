@@ -92,6 +92,18 @@ impl Room {
             user.do_send(SendingMessage::NewProducers { ids: ids.clone() });
         }
     }
+
+    pub fn get_producer_ids(&self) -> Vec<ProducerId> {
+        let producers = self.pdocuers.lock().unwrap();
+        producers.keys().cloned().collect()
+    }
+
+    pub fn broadcast_producer_closed(&self, producer_id: ProducerId) {
+        let users = self.users.lock().unwrap();
+        for user in users.iter() {
+            user.do_send(SendingMessage::ProducerClosed { id: producer_id });
+        }
+    }
 }
 
 fn media_codecs() -> Vec<RtpCodecCapability> {

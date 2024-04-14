@@ -71,6 +71,9 @@ impl Actor for WebSocket {
         tracing::info!("WebSocket stopped");
         let address = ctx.address();
         self.room.remove_user(address);
+        self.producers.iter().for_each(|p| {
+            self.room.remove_producer(p.id());
+        });
     }
 }
 
@@ -125,7 +128,7 @@ impl Handler<ReceivedMessage> for WebSocket {
             ReceivedMessage::SendRtpCapabilities { rtp_capabilities } => {
                 self.client_rtp_capabilities.replace(rtp_capabilities);
                 // Send already produced producers to the client
-                let ids = self.producers.iter().map(|p| p.id()).collect();
+                let ids = self.room.get_producer_ids();
                 address.do_send(SendingMessage::NewProducers { ids });
             }
             ReceivedMessage::ConnectProducerTransport { dtls_parameters } => {
@@ -170,6 +173,11 @@ impl Handler<ReceivedMessage> for WebSocket {
                         }
                     }
                 });
+            }
+            ReceivedMessage::ProducerClosed { id } => {
+                self.room.remove_producer(id);
+                address.do_send(InternalMessage::ProducerClosed(id));
+                tracing::info!("Producer closed: {:?}", id);
             }
             ReceivedMessage::ConnectConsumerTransport { dtls_parameters } => {
                 let transport = self.transports.consumer.clone();
@@ -270,14 +278,10 @@ impl Handler<InternalMessage> for WebSocket {
             InternalMessage::SaveProducer(producer) => {
                 let producer = Arc::new(producer);
                 let id = producer.id();
-                let room = self.room.clone();
-                _ = producer.on_close(move || {
-                    room.remove_producer(id);
-                });
                 let cloned = producer.clone();
                 self.room.add_producer(id, cloned);
-                self.producers.push(producer);
                 self.room.broadcast_producer(id);
+                self.producers.push(producer);
             }
             InternalMessage::SaveConsumer(consumer) => {
                 let consumer = Arc::new(consumer);
@@ -285,6 +289,10 @@ impl Handler<InternalMessage> for WebSocket {
             }
             InternalMessage::Stop => {
                 ctx.stop();
+            }
+            InternalMessage::ProducerClosed(id) => {
+                self.room.broadcast_producer_closed(id);
+                self.producers.retain(|p| p.id() != id);
             }
         }
     }
@@ -306,6 +314,8 @@ enum ReceivedMessage {
         kind: MediaKind,
         rtp_parameters: RtpParameters,
     },
+    #[serde(rename_all = "camelCase")]
+    ProducerClosed { id: ProducerId },
     #[serde(rename_all = "camelCase")]
     ConnectConsumerTransport { dtls_parameters: DtlsParameters },
     #[serde(rename_all = "camelCase")]
@@ -330,6 +340,8 @@ pub enum SendingMessage {
     Produced { id: ProducerId },
     #[serde(rename_all = "camelCase")]
     NewProducers { ids: Vec<ProducerId> },
+    #[serde(rename_all = "camelCase")]
+    ProducerClosed { id: ProducerId },
     #[serde(rename_all = "camelCase")]
     ConnectedConsumerTransport,
     #[serde(rename_all = "camelCase")]
@@ -356,4 +368,5 @@ enum InternalMessage {
     SaveProducer(Producer),
     SaveConsumer(Consumer),
     Stop,
+    ProducerClosed(ProducerId),
 }
