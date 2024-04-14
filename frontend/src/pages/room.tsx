@@ -19,11 +19,11 @@ export default function Room() {
 
   const [room, setRoom] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [device, setDevice] = useState<Device | null>(null);
   const [producer, setProducer] = useState<Producer | null>(null);
   const [consumers, setConsumers] = useState<{ [key: string]: Consumer }>({});
 
   const socket = useRef<WebSocketClient | null>(null);
+  const device = useRef<Device | null>(null);
   const producerTransport = useRef<Transport | null>(null);
   const consumerTransport = useRef<Transport | null>(null);
   const producerRef = useRef<HTMLVideoElement>(null);
@@ -32,8 +32,6 @@ export default function Room() {
   }>({});
 
   useEffect(() => {
-    const d = new Device();
-    setDevice(d);
     return () => {
       socket.current?.disconnect();
     };
@@ -50,6 +48,7 @@ export default function Room() {
       socket.current = ws;
       socket.current.connect(() => {
         console.debug("Connected to server");
+        device.current = new Device();
         socket.current?.send({ action: "Init" } as ClientInit);
       });
     }
@@ -77,23 +76,23 @@ export default function Room() {
 
     switch (message.action) {
       case "Init": {
-        if (!device) {
+        if (!device.current) {
           return;
         }
-        if (!device.loaded) {
-          await device.load({
+        if (!device.current.loaded) {
+          await device.current.load({
             routerRtpCapabilities: message.routerRtpCapabilities,
           });
         }
         socket.current?.send({
           action: "SendRtpCapabilities",
-          rtpCapabilities: device.rtpCapabilities,
+          rtpCapabilities: device.current.rtpCapabilities,
         });
 
-        producerTransport.current = device.createSendTransport(
+        producerTransport.current = device.current.createSendTransport(
           message.producerTransportOptions,
         );
-        consumerTransport.current = device.createRecvTransport(
+        consumerTransport.current = device.current.createRecvTransport(
           message.consumerTransportOptions,
         );
 
