@@ -6,7 +6,7 @@ use mediasoup::{
 };
 use num_cpus;
 use rand::Rng;
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 const PORTS: [u16; 32] = [
     48300, 48301, 48302, 48303, 48304, 48305, 48306, 48307, 48308, 48309, 48310, 48311, 48312,
@@ -28,6 +28,8 @@ impl WorkerOwner {
         let worker_manager = WorkerManager::new();
         let core = num_cpus::get_physical();
         let mut workers: Vec<Arc<WorkerSet>> = Vec::new();
+
+        let host = env::var("PUBLIC_IP").expect("PUBLIC_IP must be set");
 
         for i in 0..core {
             let result = worker_manager
@@ -60,7 +62,7 @@ impl WorkerOwner {
                             WebRtcServerListenInfos::new(ListenInfo {
                                 protocol: Protocol::Udp,
                                 ip: "0.0.0.0".parse().unwrap(),
-                                announced_address: Some("192.168.10.12".to_string()),
+                                announced_address: Some(host.clone()),
                                 port: Some(PORTS[i]),
                                 flags: None,
                                 send_buffer_size: None,
