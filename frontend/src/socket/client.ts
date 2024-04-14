@@ -24,6 +24,7 @@ export default class WebSocketClient {
 
   public disconnect() {
     if (this.socket) {
+      console.log("disconnect websocket");
       this.socket.close();
       this.socket = null;
     }

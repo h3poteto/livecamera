@@ -33,6 +33,8 @@ export default function Room() {
 
   useEffect(() => {
     return () => {
+      producerTransport.current?.close();
+      consumerTransport.current?.close();
       socket.current?.disconnect();
     };
   }, []);

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use mediasoup::{
     data_structures::{ListenInfo, Protocol},
     webrtc_server::{WebRtcServer, WebRtcServerListenInfos, WebRtcServerOptions},
@@ -7,6 +5,14 @@ use mediasoup::{
     worker_manager::WorkerManager,
 };
 use num_cpus;
+use rand::Rng;
+use std::sync::Arc;
+
+const PORTS: [u16; 32] = [
+    48300, 48301, 48302, 48303, 48304, 48305, 48306, 48307, 48308, 48309, 48310, 48311, 48312,
+    48313, 48314, 48315, 48316, 48317, 48318, 48319, 48320, 48321, 48322, 48323, 48324, 48325,
+    48326, 48327, 48328, 48329, 48330, 48331,
+];
 
 pub struct WorkerOwner {
     pub workers: Vec<Arc<WorkerSet>>,
@@ -23,7 +29,7 @@ impl WorkerOwner {
         let core = num_cpus::get_physical();
         let mut workers: Vec<Arc<WorkerSet>> = Vec::new();
 
-        for _ in 0..core {
+        for i in 0..core {
             let result = worker_manager
                 .create_worker({
                     let mut settings = WorkerSettings::default();
@@ -55,7 +61,7 @@ impl WorkerOwner {
                                 protocol: Protocol::Udp,
                                 ip: "0.0.0.0".parse().unwrap(),
                                 announced_address: Some("192.168.10.12".to_string()),
-                                port: None,
+                                port: Some(PORTS[i]),
                                 flags: None,
                                 send_buffer_size: None,
                                 recv_buffer_size: None,
@@ -75,7 +81,12 @@ impl WorkerOwner {
     }
 
     pub fn choose_worker(&self) -> Option<Arc<WorkerSet>> {
-        // TODO: get random worker
-        self.workers.first().cloned()
+        let length = self.workers.len();
+        if length == 0 {
+            return None;
+        }
+        let mut rng = rand::thread_rng();
+        let index = rng.gen_range(0..length);
+        Some(self.workers[index].clone())
     }
 }
