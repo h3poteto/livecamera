@@ -12,14 +12,13 @@ on:
     tags: [ 'v*.*.*' ]
   pull_request:
 
-env:
-  # Use docker.io for Docker Hub if empty
-  REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
-  IMAGE_NAME: h3poteto/livecamera
-
 jobs:
-  build:
+  server:
+    env:
+      # Use docker.io for Docker Hub if empty
+      REGISTRY: ghcr.io
+      # github.repository as <account>/<repo>
+      IMAGE_NAME: h3poteto/livecamera-server
 
     runs-on: ubuntu-latest
     permissions:
