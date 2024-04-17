@@ -1,6 +1,7 @@
 FROM node:20-alpine AS builder
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
+ENV NODE_ENV production
 
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
 RUN \
