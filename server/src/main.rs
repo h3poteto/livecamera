@@ -36,7 +36,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(room_data.clone())
             .route("/socket", web::get().to(socket))
     })
-    .bind("127.0.0.1:4000")?
+    .bind("0.0.0.0:4000")?
     .run()
     .await
 }
