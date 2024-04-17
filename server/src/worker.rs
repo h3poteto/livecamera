@@ -26,7 +26,14 @@ pub struct WorkerSet {
 impl WorkerOwner {
     pub async fn new() -> Self {
         let worker_manager = WorkerManager::new();
-        let core = num_cpus::get_physical();
+        let core = if let Ok(num_core) =
+            env::var("NUM_CPU").map(|v| v.parse::<usize>().expect("NUM_CPU must be an integer"))
+        {
+            num_core
+        } else {
+            num_cpus::get_physical()
+        };
+
         let mut workers: Vec<Arc<WorkerSet>> = Vec::new();
 
         let host = env::var("PUBLIC_IP").expect("PUBLIC_IP must be set");
