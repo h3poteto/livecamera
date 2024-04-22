@@ -258,6 +258,9 @@ impl Handler<ReceivedMessage> for WebSocket {
                     }
                 });
             }
+            ReceivedMessage::Ping => {
+                address.do_send(SendingMessage::Pong);
+            }
         }
     }
 }
@@ -322,6 +325,8 @@ enum ReceivedMessage {
     Consume { producer_id: ProducerId },
     #[serde(rename_all = "camelCase")]
     Resume { consumer_id: ConsumerId },
+    #[serde(rename_all = "camelCase")]
+    Ping,
 }
 
 #[derive(Serialize, Message, Debug)]
@@ -351,6 +356,8 @@ pub enum SendingMessage {
         kind: MediaKind,
         rtp_parameters: RtpParameters,
     },
+    #[serde(rename_all = "camelCase")]
+    Pong,
 }
 
 #[derive(Serialize, Debug)]

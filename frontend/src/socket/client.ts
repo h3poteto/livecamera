@@ -20,6 +20,10 @@ export default class WebSocketClient {
     this.socket = new WebSocket(this.url);
     this.socket.onmessage = this.message;
     this.socket.onopen = callback;
+
+    setInterval(() => {
+      this.ping();
+    }, 10000);
   }
 
   public disconnect() {
@@ -28,6 +32,13 @@ export default class WebSocketClient {
       this.socket.close();
       this.socket = null;
     }
+  }
+
+  public ping() {
+    const ping = {
+      action: "Ping",
+    };
+    this.send(ping);
   }
 
   public send(data: any) {
