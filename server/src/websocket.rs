@@ -206,8 +206,7 @@ impl Handler<ReceivedMessage> for WebSocket {
                 };
 
                 actix::spawn(async move {
-                    let mut options = ConsumerOptions::new(producer_id, rtp_capabilities);
-                    options.paused = true;
+                    let options = ConsumerOptions::new(producer_id, rtp_capabilities);
                     match transport.consume(options).await {
                         Ok(consumer) => {
                             let id = consumer.id();
