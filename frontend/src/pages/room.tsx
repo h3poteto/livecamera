@@ -12,7 +12,7 @@ import {
   TransportOptions,
 } from "mediasoup-client/lib/types";
 import { useRouter } from "next/router";
-import { RefObject, createRef, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Room() {
   const router = useRouter();
@@ -26,10 +26,7 @@ export default function Room() {
   const device = useRef<Device | null>(null);
   const producerTransport = useRef<Transport | null>(null);
   const consumerTransport = useRef<Transport | null>(null);
-  const producerRef = useRef<HTMLVideoElement>(null);
-  const consumerRefs = useRef<{
-    [key: string]: RefObject<HTMLVideoElement>;
-  }>({});
+  const sendingVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     return () => {
@@ -55,22 +52,6 @@ export default function Room() {
       });
     }
   }, [router.query.room]);
-
-  useEffect(() => {
-    Object.keys(consumers).forEach((key) => {
-      const consumer = consumers[key];
-      if (!consumer) {
-        const ref = consumerRefs.current;
-        delete ref[key];
-        consumerRefs.current = Object.assign({}, ref);
-        return;
-      }
-      const ref = consumerRefs.current[key];
-      if (ref.current) {
-        ref.current.srcObject = new MediaStream([consumer.track]);
-      }
-    });
-  }, [consumers]);
 
   const messageHandler = async (e: MessageEvent) => {
     const message: ServerMessage = JSON.parse(e.data);
@@ -204,7 +185,6 @@ export default function Room() {
             consumerId: consumer.id,
           } as Resume);
 
-          consumerRefs.current[m.producerId] = createRef<HTMLVideoElement>();
           setConsumers((prev) => {
             return Object.assign({}, prev, {
               [m.producerId]: consumer,
@@ -236,8 +216,8 @@ export default function Room() {
       audio: true,
     });
     setStream(s);
-    if (producerRef.current) {
-      producerRef.current.srcObject = s;
+    if (sendingVideoRef.current) {
+      sendingVideoRef.current.srcObject = s;
     }
 
     if (!producerTransport) {
@@ -259,8 +239,8 @@ export default function Room() {
     }
     stream?.getTracks().forEach((track) => track.stop());
     setStream(null);
-    if (producerRef.current) {
-      producerRef.current.srcObject = null;
+    if (sendingVideoRef.current) {
+      sendingVideoRef.current.srcObject = null;
     }
   };
 
@@ -284,11 +264,24 @@ export default function Room() {
         </button>
       </div>
       <h3>My Screen</h3>
-      <video autoPlay muted ref={producerRef} width={480}></video>
+      <video autoPlay muted ref={sendingVideoRef} width={480}></video>
       <h3>Receiving</h3>
-      {Object.keys(consumerRefs.current).map((key) => (
+      {Object.keys(consumers).map((key) => (
         <div key={key}>
-          <video autoPlay ref={consumerRefs.current[key]} width={480}></video>
+          {consumers[key] && (
+            <video
+              id={key}
+              autoPlay
+              ref={(video) => {
+                if (video && consumers[key]) {
+                  video.srcObject = new MediaStream([consumers[key].track]);
+                } else {
+                  console.warn("video element or track is null");
+                }
+              }}
+              width={480}
+            ></video>
+          )}
         </div>
       ))}
     </div>
