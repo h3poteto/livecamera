@@ -24,10 +24,12 @@ export default class SgnalHandler {
   private producer: Producer | null;
   private consumers: { [producerId: string]: Consumer };
   private consumed: (producerId: string, track: MediaStreamTrack) => void;
+  private producerClosed: (producerId: string) => void;
 
   constructor(
     url: string,
     consumed: (producerId: string, track: MediaStreamTrack) => void,
+    producerClosed: (producerId: string) => void,
   ) {
     this.socket = null;
     this.url = url;
@@ -37,6 +39,7 @@ export default class SgnalHandler {
     this.producer = null;
     this.consumers = {};
     this.consumed = consumed;
+    this.producerClosed = producerClosed;
   }
 
   connect() {
@@ -250,6 +253,7 @@ export default class SgnalHandler {
         if (consumer) {
           consumer.close();
           delete this.consumers[id];
+          this.producerClosed(id);
         }
         break;
     }

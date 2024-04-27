@@ -28,6 +28,17 @@ export default function Room() {
             [producerId]: stream,
           }));
         },
+        (producerId: string) => {
+          setRecevingStream((prev) => {
+            const stream = prev[producerId];
+            if (stream) {
+              stream.getTracks().forEach((track) => track.stop());
+            }
+            const newStream = { ...prev };
+            delete newStream[producerId];
+            return newStream;
+          });
+        },
       );
       setSignalHandler(handler);
       handler.connect();
