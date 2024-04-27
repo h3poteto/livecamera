@@ -13,7 +13,23 @@ import { Device } from "mediasoup-client";
 import { Consumer, ConsumerOptions } from "mediasoup-client/lib/Consumer";
 import { Producer } from "mediasoup-client/lib/types";
 
-const iceServers: Array<RTCIceServer> = [];
+const iceServers: Array<RTCIceServer> = [
+  {
+    urls: "stun:ice.home.h3poteto.dev:3478",
+    username: "root",
+    credential: "homecluster",
+  },
+  {
+    urls: "turn:ice.home.h3poteto.dev:3478?transport=udp",
+    username: "root",
+    credential: "homecluster",
+  },
+  {
+    urls: "turns:ice.home.h3poteto.dev:5349?transport=tcp",
+    username: "root",
+    credential: "homecluster",
+  },
+];
 
 export default class SgnalHandler {
   private socket: WebSocketClient | null;
