@@ -2,7 +2,6 @@
 name = "livecamera"
 version = "0.1.0"
 edition = "2021"
-lib = "server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,7 +9,7 @@ lib = "server"
 actix = "0.13.3"
 actix-web = "4.5.1"
 actix-web-actors = "4.3.0"
-mediasoup = "0.16.0"
+mediasoup = "0.17.0"
 num_cpus = "1.16.0"
 rand = "0.8.5"
 serde = "1.0.200"

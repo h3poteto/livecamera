@@ -71,6 +71,7 @@ impl WorkerOwner {
                                 ip: "0.0.0.0".parse().unwrap(),
                                 announced_address: Some(host.clone()),
                                 port: Some(PORTS[i]),
+                                port_range: None,
                                 flags: None,
                                 send_buffer_size: None,
                                 recv_buffer_size: None,
