@@ -10,7 +10,7 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "mediasoup-client": "^3.7.6",
+    "mediasoup-client": "^3.7.8",
     "next": "14.2.3",
     "react": "^18",
     "react-dom": "^18"
