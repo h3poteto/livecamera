@@ -1834,9 +1834,9 @@ dependencies = [
 
 [[package]]
 name = "rheomesh"
-version = "0.3.1"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290130f94fb96a3afed025515ddcd907775dd2108f849b21a44c94c54fcf83b2"
+checksum = "ae0b6adbd0ba72a285dd9a0bfb6e99dbe724c11329d0aadb9ed0de0006c7c28e"
 dependencies = [
  "actix",
  "actix-web",
