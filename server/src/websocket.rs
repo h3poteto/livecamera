@@ -1,59 +1,60 @@
-use std::sync::Arc;
-
-use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
-use actix_web_actors::ws;
-use mediasoup::{
-    consumer::{Consumer, ConsumerId, ConsumerOptions},
-    data_structures::{DtlsParameters, IceCandidate, IceParameters},
-    producer::{Producer, ProducerId, ProducerOptions},
-    rtp_parameters::{MediaKind, RtpCapabilities, RtpCapabilitiesFinalized, RtpParameters},
-    transport::{Transport, TransportId},
-    webrtc_transport::{WebRtcTransport, WebRtcTransportOptions, WebRtcTransportRemoteParameters},
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr},
+    sync::Arc,
 };
+
+use actix::{Actor, AsyncContext, Handler, Message, StreamHandler};
+use actix_web::web::Data;
+use actix_web_actors::ws;
+use rheomesh::{self, publisher::Publisher, subscriber::Subscriber, transport::Transport};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+use webrtc::{
+    ice_transport::{ice_candidate::RTCIceCandidateInit, ice_server::RTCIceServer},
+    peer_connection::sdp::session_description::RTCSessionDescription,
+};
 
 use crate::room;
 
-#[derive(Debug)]
-struct Transports {
-    producer: WebRtcTransport,
-    consumer: WebRtcTransport,
-}
-
 pub struct WebSocket {
-    pub room: Arc<room::Room>,
-    transports: Transports,
-    producers: Vec<Arc<Producer>>,
-    consumers: Vec<Arc<Consumer>>,
-    client_rtp_capabilities: Option<RtpCapabilities>,
+    owner: Data<Mutex<room::RoomOwner>>,
+    room: Arc<room::Room>,
+    publish_transport: Arc<rheomesh::publish_transport::PublishTransport>,
+    subscribe_transport: Arc<rheomesh::subscribe_transport::SubscribeTransport>,
+    publishers: Arc<Mutex<HashMap<String, Arc<Mutex<Publisher>>>>>,
+    subscribers: Arc<Mutex<HashMap<String, Arc<Mutex<Subscriber>>>>>,
 }
 
 impl WebSocket {
-    pub async fn new(room: Arc<room::Room>) -> Self {
-        let mut transport_options =
-            WebRtcTransportOptions::new_with_server(room.worker.server.clone());
-        transport_options.enable_tcp = true;
-        transport_options.enable_udp = true;
+    // This function is called when a new user connect to this server.
+    pub async fn new(room: Arc<room::Room>, owner: Data<Mutex<room::RoomOwner>>) -> Self {
+        tracing::info!("Starting WebSocket");
+        let r = room.router.clone();
+        let router = r.lock().await;
 
-        let producer_transport = room
-            .router
-            .create_webrtc_transport(transport_options.clone())
-            .await
-            .expect("Failed to create producer transport");
-        let consumer_transport = room
-            .router
-            .create_webrtc_transport(transport_options)
-            .await
-            .expect("Failed to create consumer transport");
-        WebSocket {
+        let mut config = rheomesh::config::WebRTCTransportConfig::default();
+        // Public IP address of your server.
+        config.announced_ips = vec![IpAddr::V4(Ipv4Addr::new(192, 168, 10, 10))];
+        config.configuration.ice_servers = vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }];
+        // Port range of your server.
+        config.port_range = Some(rheomesh::config::PortRange {
+            min: 31300,
+            max: 31331,
+        });
+
+        let publish_transport = router.create_publish_transport(config.clone()).await;
+        let subscribe_transport = router.create_subscribe_transport(config).await;
+        Self {
+            owner,
             room,
-            transports: Transports {
-                producer: producer_transport,
-                consumer: consumer_transport,
-            },
-            producers: [].to_vec(),
-            consumers: [].to_vec(),
-            client_rtp_capabilities: None,
+            publish_transport: Arc::new(publish_transport),
+            subscribe_transport: Arc::new(subscribe_transport),
+            publishers: Arc::new(Mutex::new(HashMap::new())),
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -62,18 +63,38 @@ impl Actor for WebSocket {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        tracing::info!("WebSocket started");
+        tracing::info!("New WebSocket connection is started");
         let address = ctx.address();
-        self.room.add_user(address);
+        self.room.add_user(address.clone());
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
-        tracing::info!("WebSocket stopped");
+        tracing::info!("The WebSocket connection is stopped");
         let address = ctx.address();
-        self.room.remove_user(address);
-        self.producers.iter().for_each(|p| {
-            self.room.remove_producer(p.id());
+        let subscribe_transport = self.subscribe_transport.clone();
+        let publish_transport = self.publish_transport.clone();
+        actix::spawn(async move {
+            subscribe_transport
+                .close()
+                .await
+                .expect("failed to close subscribe_transport");
+            publish_transport
+                .close()
+                .await
+                .expect("failed to close publish_transport");
         });
+        let users = self.room.remove_user(address);
+        if users == 0 {
+            let owner = self.owner.clone();
+            let router = self.room.router.clone();
+            let room_id = self.room.id.clone();
+            actix::spawn(async move {
+                let mut owner = owner.lock().await;
+                owner.remove_room(room_id);
+                let router = router.lock().await;
+                router.close();
+            });
+        }
     }
 }
 
@@ -96,170 +117,195 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocket {
         }
     }
 }
-
 impl Handler<ReceivedMessage> for WebSocket {
     type Result = ();
 
-    fn handle(&mut self, msg: ReceivedMessage, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: ReceivedMessage, ctx: &mut Self::Context) -> Self::Result {
         let address = ctx.address();
-
-        tracing::debug!("Received message: {:?}", msg);
+        tracing::debug!("received message: {:?}", msg);
 
         match msg {
-            ReceivedMessage::Init => {
-                let router_rtp_capabilities = self.room.router.rtp_capabilities().clone();
-                let message = SendingMessage::Init {
-                    consumer_transport_options: TransportOptions {
-                        id: self.transports.consumer.id(),
-                        dtls_parameters: self.transports.consumer.dtls_parameters(),
-                        ice_candidates: self.transports.consumer.ice_candidates().clone(),
-                        ice_parameters: self.transports.consumer.ice_parameters().clone(),
-                    },
-                    producer_transport_options: TransportOptions {
-                        id: self.transports.producer.id(),
-                        dtls_parameters: self.transports.producer.dtls_parameters(),
-                        ice_candidates: self.transports.producer.ice_candidates().clone(),
-                        ice_parameters: self.transports.producer.ice_parameters().clone(),
-                    },
-                    router_rtp_capabilities,
-                };
-                address.do_send(message);
-            }
-            ReceivedMessage::SendRtpCapabilities { rtp_capabilities } => {
-                self.client_rtp_capabilities.replace(rtp_capabilities);
-                // Send already produced producers to the client
-                let ids = self.room.get_producer_ids();
-                address.do_send(SendingMessage::NewProducers { ids });
-            }
-            ReceivedMessage::ConnectProducerTransport { dtls_parameters } => {
-                let transport = self.transports.producer.clone();
-                actix::spawn(async move {
-                    match transport
-                        .connect(WebRtcTransportRemoteParameters { dtls_parameters })
-                        .await
-                    {
-                        Ok(_) => {
-                            tracing::info!("Producer transport connected");
-                            address.do_send(SendingMessage::ConnectedProducerTransport);
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to connect producer transport: {:?}", err);
-                            address.do_send(InternalMessage::Stop);
-                        }
-                    }
-                });
-            }
-            ReceivedMessage::Produce {
-                kind,
-                rtp_parameters,
-            } => {
-                let transport = self.transports.producer.clone();
-
-                actix::spawn(async move {
-                    match transport
-                        .produce(ProducerOptions::new(kind, rtp_parameters))
-                        .await
-                    {
-                        Ok(producer) => {
-                            let id = producer.id();
-                            address.do_send(SendingMessage::Produced { id });
-                            address.do_send(InternalMessage::SaveProducer(producer));
-
-                            tracing::info!("{:?} producer created: {:?}", kind, id);
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to produce {:?}: {:?}", kind, err);
-                            address.do_send(InternalMessage::Stop)
-                        }
-                    }
-                });
-            }
-            ReceivedMessage::ProducerClosed { id } => {
-                self.room.remove_producer(id);
-                address.do_send(InternalMessage::ProducerClosed(id));
-                tracing::info!("Producer closed: {:?}", id);
-            }
-            ReceivedMessage::ConnectConsumerTransport { dtls_parameters } => {
-                let transport = self.transports.consumer.clone();
-                actix::spawn(async move {
-                    match transport
-                        .connect(WebRtcTransportRemoteParameters { dtls_parameters })
-                        .await
-                    {
-                        Ok(_) => {
-                            tracing::info!("Consumer transport connected");
-                            address.do_send(SendingMessage::ConnectedConsumerTransport);
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to connect consumer transport: {:?}", err);
-                            address.do_send(InternalMessage::Stop);
-                        }
-                    }
-                });
-            }
-            ReceivedMessage::Consume { producer_id } => {
-                let transport = self.transports.consumer.clone();
-                let Some(rtp_capabilities) = self.client_rtp_capabilities.clone() else {
-                    tracing::error!("RTP capabilities not set");
-                    address.do_send(InternalMessage::Stop);
-                    return;
-                };
-
-                actix::spawn(async move {
-                    let mut options = ConsumerOptions::new(producer_id, rtp_capabilities);
-                    options.paused = true;
-                    match transport.consume(options).await {
-                        Ok(consumer) => {
-                            let id = consumer.id();
-                            let producer_id = consumer.producer_id();
-                            let kind = consumer.kind();
-                            let rtp_parameters = consumer.rtp_parameters().clone();
-                            address.do_send(SendingMessage::Consumed {
-                                id,
-                                producer_id,
-                                kind,
-                                rtp_parameters,
-                            });
-                            address.do_send(InternalMessage::SaveConsumer(consumer));
-                            tracing::info!("{:?} consumer created: {:?}", kind, id);
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to consume {:?}: {:?}", producer_id, err);
-                            address.do_send(InternalMessage::Stop);
-                        }
-                    }
-                });
-            }
-            ReceivedMessage::Resume { consumer_id } => {
-                let Some(consumer) = self.consumers.iter().find(|c| c.id() == consumer_id) else {
-                    tracing::error!("Consumer not found: {:?}", consumer_id);
-                    address.do_send(InternalMessage::Stop);
-                    return;
-                };
-                let consumer = consumer.clone();
-
-                actix::spawn(async move {
-                    match consumer.resume().await {
-                        Ok(_) => {
-                            tracing::info!(
-                                "{:?} consumer resumed: {:?}",
-                                consumer.kind(),
-                                consumer_id
-                            );
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                "Failed to resume {:?} consumer {}: {:?}",
-                                consumer.kind(),
-                                consumer_id,
-                                err
-                            );
-                        }
-                    }
-                });
-            }
             ReceivedMessage::Ping => {
                 address.do_send(SendingMessage::Pong);
+            }
+            ReceivedMessage::PublisherInit => {
+                let publish_transport = self.publish_transport.clone();
+                tokio::spawn(async move {
+                    let addr = address.clone();
+                    publish_transport
+                        .on_ice_candidate(Box::new(move |candidate| {
+                            let init = candidate.to_json().expect("failed to parse candidate");
+                            addr.do_send(SendingMessage::PublisherIce { candidate: init });
+                        }))
+                        .await;
+                });
+            }
+            ReceivedMessage::SubscriberInit => {
+                let subscribe_transport = self.subscribe_transport.clone();
+                let room = self.room.clone();
+                tokio::spawn(async move {
+                    let addr = address.clone();
+                    let addr2 = address.clone();
+                    subscribe_transport
+                        .on_ice_candidate(Box::new(move |candidate| {
+                            let init = candidate.to_json().expect("failed to parse candidate");
+                            addr.do_send(SendingMessage::SubscriberIce { candidate: init });
+                        }))
+                        .await;
+                    subscribe_transport
+                        .on_negotiation_needed(Box::new(move |offer| {
+                            addr2.do_send(SendingMessage::Offer { sdp: offer });
+                        }))
+                        .await;
+
+                    let router = room.router.lock().await;
+                    let ids = router.publisher_ids();
+                    tracing::info!("router publisher ids {:#?}", ids);
+                    address.do_send(SendingMessage::Published { publisher_ids: ids });
+                });
+            }
+
+            ReceivedMessage::RequestPublish => address.do_send(SendingMessage::StartAsPublisher),
+            ReceivedMessage::PublisherIce { candidate } => {
+                let publish_transport = self.publish_transport.clone();
+                actix::spawn(async move {
+                    let _ = publish_transport
+                        .add_ice_candidate(candidate)
+                        .await
+                        .expect("failed to add ICE candidate");
+                });
+            }
+            ReceivedMessage::SubscriberIce { candidate } => {
+                let subscribe_transport = self.subscribe_transport.clone();
+                actix::spawn(async move {
+                    let _ = subscribe_transport
+                        .add_ice_candidate(candidate)
+                        .await
+                        .expect("failed to add ICE candidate");
+                });
+            }
+            ReceivedMessage::Offer { sdp } => {
+                let publish_transport = self.publish_transport.clone();
+                actix::spawn(async move {
+                    let answer = publish_transport
+                        .get_answer(sdp)
+                        .await
+                        .expect("failed to connect publish_transport");
+
+                    address.do_send(SendingMessage::Answer { sdp: answer });
+                });
+            }
+            ReceivedMessage::Subscribe {
+                publisher_id: track_id,
+            } => {
+                let subscribe_transport = self.subscribe_transport.clone();
+                let subscribers = self.subscribers.clone();
+                actix::spawn(async move {
+                    let (subscriber, offer) = subscribe_transport
+                        .subscribe(track_id)
+                        .await
+                        .expect("failed to connect subscribe_transport");
+
+                    #[allow(unused)]
+                    let mut id = "".to_owned();
+                    {
+                        let guard = subscriber.lock().await;
+                        id = guard.id.clone();
+                    }
+                    let mut s = subscribers.lock().await;
+                    s.insert(id.clone(), subscriber);
+                    address.do_send(SendingMessage::Offer { sdp: offer });
+                    address.do_send(SendingMessage::Subscribed { subscriber_id: id })
+                });
+            }
+            ReceivedMessage::Answer { sdp } => {
+                let subscribe_transport = self.subscribe_transport.clone();
+                actix::spawn(async move {
+                    let _ = subscribe_transport
+                        .set_answer(sdp)
+                        .await
+                        .expect("failed to set answer");
+                });
+            }
+            ReceivedMessage::Publish { track_id } => {
+                let room = self.room.clone();
+                let publish_transport = self.publish_transport.clone();
+                let publishers = self.publishers.clone();
+                actix::spawn(async move {
+                    match publish_transport.publish(track_id).await {
+                        Ok(publisher) => {
+                            #[allow(unused)]
+                            let mut track_id = "".to_owned();
+                            {
+                                let publisher = publisher.lock().await;
+                                track_id = publisher.track_id.clone();
+                            }
+                            tracing::debug!("published a track: {}", track_id);
+                            // address.do_send(SendingMessage::Published {
+                            //     track_id: id.clone(),
+                            // });
+                            let mut p = publishers.lock().await;
+                            p.insert(track_id.clone(), publisher.clone());
+                            room.get_peers(&address).iter().for_each(|peer| {
+                                peer.do_send(SendingMessage::Published {
+                                    publisher_ids: vec![track_id.clone()],
+                                });
+                            });
+                        }
+                        Err(err) => {
+                            tracing::error!("{}", err);
+                        }
+                    }
+                });
+            }
+            ReceivedMessage::StopPublish { publisher_id } => {
+                let publishers = self.publishers.clone();
+                actix::spawn(async move {
+                    let mut p = publishers.lock().await;
+                    if let Some(publisher) = p.remove(&publisher_id) {
+                        let publisher = publisher.lock().await;
+                        publisher.close().await;
+                    }
+                });
+            }
+            ReceivedMessage::StopSubscribe { subscriber_id } => {
+                let subscribers = self.subscribers.clone();
+                actix::spawn(async move {
+                    let mut s = subscribers.lock().await;
+                    if let Some(subscriber) = s.remove(&subscriber_id) {
+                        let subscriber = subscriber.lock().await;
+                        subscriber.close().await;
+                    }
+                });
+            }
+            ReceivedMessage::SetPreferredLayer {
+                subscriber_id,
+                sid,
+                tid,
+            } => {
+                let subscribers = self.subscribers.clone();
+                actix::spawn(async move {
+                    let s = subscribers.lock().await;
+                    if let Some(subscriber) = s.get(&subscriber_id) {
+                        let mut subscriber = subscriber.lock().await;
+                        if let Err(err) = subscriber.set_preferred_layer(sid, tid).await {
+                            tracing::error!("Failed to set preferred layer: {}", err);
+                        }
+                    }
+                });
+            }
+            ReceivedMessage::RestartICE {} => {
+                let subscribe_transport = self.subscribe_transport.clone();
+                actix::spawn(async move {
+                    match subscribe_transport.restart_ice().await {
+                        Ok(offer) => {
+                            address.do_send(SendingMessage::Offer { sdp: offer });
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to restart ICE: {}", err);
+                        }
+                    }
+                });
             }
         }
     }
@@ -268,112 +314,79 @@ impl Handler<ReceivedMessage> for WebSocket {
 impl Handler<SendingMessage> for WebSocket {
     type Result = ();
 
-    fn handle(&mut self, message: SendingMessage, ctx: &mut Self::Context) {
-        ctx.text(serde_json::to_string(&message).unwrap());
+    fn handle(&mut self, msg: SendingMessage, ctx: &mut Self::Context) -> Self::Result {
+        tracing::debug!("sending message: {:?}", msg);
+        ctx.text(serde_json::to_string(&msg).expect("failed to parse SendingMessage"));
     }
 }
 
 impl Handler<InternalMessage> for WebSocket {
     type Result = ();
 
-    fn handle(&mut self, message: InternalMessage, ctx: &mut Self::Context) {
-        match message {
-            InternalMessage::SaveProducer(producer) => {
-                let producer = Arc::new(producer);
-                let id = producer.id();
-                let cloned = producer.clone();
-                self.room.add_producer(id, cloned);
-                self.room.broadcast_producer(id);
-                self.producers.push(producer);
-            }
-            InternalMessage::SaveConsumer(consumer) => {
-                let consumer = Arc::new(consumer);
-                self.consumers.push(consumer);
-            }
-            InternalMessage::Stop => {
-                ctx.stop();
-            }
-            InternalMessage::ProducerClosed(id) => {
-                self.room.broadcast_producer_closed(id);
-                self.producers.retain(|p| p.id() != id);
-            }
-        }
-    }
+    fn handle(&mut self, _msg: InternalMessage, _ctx: &mut Self::Context) -> Self::Result {}
 }
 
-// messages
 #[derive(Deserialize, Message, Debug)]
 #[serde(tag = "action")]
 #[rtype(result = "()")]
 enum ReceivedMessage {
     #[serde(rename_all = "camelCase")]
-    Init,
+    Ping,
     #[serde(rename_all = "camelCase")]
-    SendRtpCapabilities { rtp_capabilities: RtpCapabilities },
+    PublisherInit,
     #[serde(rename_all = "camelCase")]
-    ConnectProducerTransport { dtls_parameters: DtlsParameters },
+    SubscriberInit,
     #[serde(rename_all = "camelCase")]
-    Produce {
-        kind: MediaKind,
-        rtp_parameters: RtpParameters,
+    RequestPublish,
+    // Seems like client-side (JS) RTCIceCandidate struct is equal RTCIceCandidateInit.
+    #[serde(rename_all = "camelCase")]
+    PublisherIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    SubscriberIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    Offer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Subscribe { publisher_id: String },
+    #[serde(rename_all = "camelCase")]
+    Answer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Publish { track_id: String },
+    #[serde(rename_all = "camelCase")]
+    StopPublish { publisher_id: String },
+    #[serde(rename_all = "camelCase")]
+    StopSubscribe { subscriber_id: String },
+    #[serde(rename_all = "camelCase")]
+    SetPreferredLayer {
+        subscriber_id: String,
+        sid: u8,
+        tid: Option<u8>,
     },
     #[serde(rename_all = "camelCase")]
-    ProducerClosed { id: ProducerId },
-    #[serde(rename_all = "camelCase")]
-    ConnectConsumerTransport { dtls_parameters: DtlsParameters },
-    #[serde(rename_all = "camelCase")]
-    Consume { producer_id: ProducerId },
-    #[serde(rename_all = "camelCase")]
-    Resume { consumer_id: ConsumerId },
-    #[serde(rename_all = "camelCase")]
-    Ping,
+    RestartICE,
 }
 
 #[derive(Serialize, Message, Debug)]
 #[serde(tag = "action")]
 #[rtype(result = "()")]
-pub enum SendingMessage {
-    #[serde(rename_all = "camelCase")]
-    Init {
-        consumer_transport_options: TransportOptions,
-        producer_transport_options: TransportOptions,
-        router_rtp_capabilities: RtpCapabilitiesFinalized,
-    },
-    #[serde(rename_all = "camelCase")]
-    ConnectedProducerTransport,
-    #[serde(rename_all = "camelCase")]
-    Produced { id: ProducerId },
-    #[serde(rename_all = "camelCase")]
-    NewProducers { ids: Vec<ProducerId> },
-    #[serde(rename_all = "camelCase")]
-    ProducerClosed { id: ProducerId },
-    #[serde(rename_all = "camelCase")]
-    ConnectedConsumerTransport,
-    #[serde(rename_all = "camelCase")]
-    Consumed {
-        id: ConsumerId,
-        producer_id: ProducerId,
-        kind: MediaKind,
-        rtp_parameters: RtpParameters,
-    },
+enum SendingMessage {
     #[serde(rename_all = "camelCase")]
     Pong,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TransportOptions {
-    id: TransportId,
-    dtls_parameters: DtlsParameters,
-    ice_candidates: Vec<IceCandidate>,
-    ice_parameters: IceParameters,
+    #[serde(rename_all = "camelCase")]
+    StartAsPublisher,
+    #[serde(rename_all = "camelCase")]
+    Answer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    Offer { sdp: RTCSessionDescription },
+    #[serde(rename_all = "camelCase")]
+    PublisherIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    SubscriberIce { candidate: RTCIceCandidateInit },
+    #[serde(rename_all = "camelCase")]
+    Published { publisher_ids: Vec<String> },
+    #[serde(rename_all = "camelCase")]
+    Subscribed { subscriber_id: String },
 }
 
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
-enum InternalMessage {
-    SaveProducer(Producer),
-    SaveConsumer(Consumer),
-    Stop,
-    ProducerClosed(ProducerId),
-}
+enum InternalMessage {}

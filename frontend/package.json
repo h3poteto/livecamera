@@ -10,15 +10,15 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "mediasoup-client": "^3.7.18",
-    "next": "14.2.23",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "rheomesh": "0.3.3",
+    "next": "^15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.10",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",

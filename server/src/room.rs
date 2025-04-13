@@ -1,29 +1,27 @@
-use std::{
-    collections::HashMap,
-    num::{NonZeroU32, NonZeroU8},
-    sync::{Arc, Mutex},
-};
+use rheomesh;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 
+use crate::websocket::WebSocket;
 use actix::Addr;
-use mediasoup::{
-    producer::{Producer, ProducerId},
-    router::{Router, RouterOptions},
-    rtp_parameters::{RtcpFeedback, RtpCodecCapability, RtpCodecParametersParameters},
-};
-
-use crate::{
-    websocket::{SendingMessage, WebSocket},
-    worker::WorkerSet,
-};
 
 pub struct RoomOwner {
     pub rooms: HashMap<String, Arc<Room>>,
+    worker: Arc<Mutex<rheomesh::worker::Worker>>,
 }
 
 impl RoomOwner {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
+        let worker = rheomesh::worker::Worker::new(rheomesh::config::WorkerConfig {
+            relay_sender_port: 9441,
+            relay_server_udp_port: 9442,
+            relay_server_tcp_port: 9443,
+        })
+        .await
+        .unwrap();
         RoomOwner {
             rooms: HashMap::<String, Arc<Room>>::new(),
+            worker,
         }
     }
 
@@ -31,37 +29,36 @@ impl RoomOwner {
         self.rooms.get(&id).cloned()
     }
 
-    pub async fn create_new_room(&mut self, id: String, worker: Arc<WorkerSet>) -> Arc<Room> {
-        let room = Room::new(id.clone(), worker).await;
+    pub async fn create_new_room(
+        &mut self,
+        id: String,
+        config: rheomesh::config::MediaConfig,
+    ) -> Arc<Room> {
+        let mut worker = self.worker.lock().await;
+        let router = worker.new_router(config);
+        let room = Room::new(id.clone(), router);
         let a = Arc::new(room);
         self.rooms.insert(id.clone(), a.clone());
         a
+    }
+
+    pub fn remove_room(&mut self, room_id: String) {
+        self.rooms.remove(&room_id);
     }
 }
 
 pub struct Room {
     pub id: String,
-    pub router: Router,
-    pub worker: Arc<WorkerSet>,
-    users: Mutex<Vec<Addr<WebSocket>>>,
-    pdocuers: Mutex<HashMap<ProducerId, Arc<Producer>>>,
+    pub router: Arc<Mutex<rheomesh::router::Router>>,
+    users: std::sync::Mutex<Vec<Addr<WebSocket>>>,
 }
 
 impl Room {
-    pub async fn new(room_id: String, worker: Arc<WorkerSet>) -> Self {
-        let router = worker
-            .worker
-            .create_router(RouterOptions::new(media_codecs()))
-            .await
-            .expect("Failed to create router");
-
-        tracing::info!("Room created: {}", room_id);
-        Room {
-            id: room_id,
+    pub fn new(id: String, router: Arc<Mutex<rheomesh::router::Router>>) -> Self {
+        Self {
+            id,
             router,
-            worker,
-            users: Mutex::new(Vec::new()),
-            pdocuers: Mutex::new(HashMap::new()),
+            users: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -70,64 +67,14 @@ impl Room {
         users.push(user);
     }
 
-    pub fn remove_user(&self, user: Addr<WebSocket>) {
+    pub fn remove_user(&self, user: Addr<WebSocket>) -> usize {
         let mut users = self.users.lock().unwrap();
         users.retain(|u| u != &user);
+        users.len()
     }
 
-    pub fn add_producer(&self, producer_id: ProducerId, producer: Arc<Producer>) {
-        let mut producers = self.pdocuers.lock().unwrap();
-        producers.insert(producer_id, producer);
-    }
-
-    pub fn remove_producer(&self, producer_id: ProducerId) {
-        let mut producers = self.pdocuers.lock().unwrap();
-        producers.remove(&producer_id);
-    }
-
-    pub fn broadcast_producer(&self, producer_id: ProducerId) {
-        let ids = vec![producer_id];
+    pub fn get_peers(&self, user: &Addr<WebSocket>) -> Vec<Addr<WebSocket>> {
         let users = self.users.lock().unwrap();
-        for user in users.iter() {
-            user.do_send(SendingMessage::NewProducers { ids: ids.clone() });
-        }
+        users.iter().filter(|u| u != &user).cloned().collect()
     }
-
-    pub fn get_producer_ids(&self) -> Vec<ProducerId> {
-        let producers = self.pdocuers.lock().unwrap();
-        producers.keys().cloned().collect()
-    }
-
-    pub fn broadcast_producer_closed(&self, producer_id: ProducerId) {
-        let users = self.users.lock().unwrap();
-        for user in users.iter() {
-            user.do_send(SendingMessage::ProducerClosed { id: producer_id });
-        }
-    }
-}
-
-fn media_codecs() -> Vec<RtpCodecCapability> {
-    vec![
-        RtpCodecCapability::Audio {
-            mime_type: mediasoup::rtp_parameters::MimeTypeAudio::Opus,
-            preferred_payload_type: None,
-            clock_rate: NonZeroU32::new(48000).unwrap(),
-            channels: NonZeroU8::new(2).unwrap(),
-            parameters: RtpCodecParametersParameters::from([("useinbandfec", 1_u32.into())]),
-            rtcp_feedback: vec![RtcpFeedback::TransportCc],
-        },
-        RtpCodecCapability::Video {
-            mime_type: mediasoup::rtp_parameters::MimeTypeVideo::Vp8,
-            preferred_payload_type: None,
-            clock_rate: NonZeroU32::new(90000).unwrap(),
-            parameters: RtpCodecParametersParameters::default(),
-            rtcp_feedback: vec![
-                RtcpFeedback::Nack,
-                RtcpFeedback::NackPli,
-                RtcpFeedback::CcmFir,
-                RtcpFeedback::GoogRemb,
-                RtcpFeedback::TransportCc,
-            ],
-        },
-    ]
 }
