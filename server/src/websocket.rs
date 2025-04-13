@@ -42,8 +42,8 @@ impl WebSocket {
         }];
         // Port range of your server.
         config.port_range = Some(rheomesh::config::PortRange {
-            min: 12000,
-            max: 15000,
+            min: 31300,
+            max: 31331,
         });
 
         let publish_transport = router.create_publish_transport(config.clone()).await;
