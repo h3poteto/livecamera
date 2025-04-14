@@ -39,9 +39,8 @@ export default function Room() {
   }, [router.query.room]);
 
   const connect = () => {
-    ws.current = new WebSocket(
-      `ws://localhost:${process.env.NEXT_PUBLIC_SERVER_PORT || "4000"}/socket?room=${room}`,
-    );
+    const url = process.env.NEXT_PUBLIC_WS_URL as string;
+    ws.current = new WebSocket(`${url}/socket?room=${room}`);
     ws.current.onopen = () => {
       console.debug("Connected websocket server");
       startPublishPeer();
