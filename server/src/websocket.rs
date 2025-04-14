@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
 };
@@ -35,11 +36,28 @@ impl WebSocket {
 
         let mut config = rheomesh::config::WebRTCTransportConfig::default();
         // Public IP address of your server.
-        config.announced_ips = vec![IpAddr::V4(Ipv4Addr::new(192, 168, 10, 10))];
-        config.configuration.ice_servers = vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }];
+        let ip = env::var("PUBLIC_IP").expect("PUBLIC_IP is required");
+        let ipv4 = ip
+            .parse::<Ipv4Addr>()
+            .expect("failed to parse public IP address");
+        config.announced_ips = vec![IpAddr::V4(ipv4)];
+        config.configuration.ice_servers = vec![
+            RTCIceServer {
+                urls: vec!["stun:ice.home.h3poteto.dev:3478".to_owned()],
+                username: "root".to_owned(),
+                credential: "homecluster".to_owned(),
+            },
+            RTCIceServer {
+                urls: vec!["turn:ice.home.h3poteto.dev:3478?transport=udp".to_owned()],
+                username: "root".to_owned(),
+                credential: "homecluster".to_owned(),
+            },
+            RTCIceServer {
+                urls: vec!["turns:ice.home.h3poteto.dev:5349?transport=tcp".to_owned()],
+                username: "root".to_owned(),
+                credential: "homecluster".to_owned(),
+            },
+        ];
         // Port range of your server.
         config.port_range = Some(rheomesh::config::PortRange {
             min: 31300,

@@ -7,7 +7,23 @@ import {
 } from "rheomesh";
 
 const peerConnectionConfig: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  iceServers: [
+    {
+      urls: "stun:ice.home.h3poteto.dev:3478",
+      username: "root",
+      credential: "homecluster",
+    },
+    {
+      urls: "turn:ice.home.h3poteto.dev:3478?transport=udp",
+      username: "root",
+      credential: "homecluster",
+    },
+    {
+      urls: "turns:ice.home.h3poteto.dev:5349?transport=tcp",
+      username: "root",
+      credential: "homecluster",
+    },
+  ],
 };
 
 export default function Room() {
