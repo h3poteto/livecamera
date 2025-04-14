@@ -296,7 +296,7 @@ export default function Room() {
           id="connect"
           onClick={connect}
           disabled={connected}
-          className="bg-blue-500 text-white px-4 py-1 rounded-md hover:bg-blue-600"
+          className="bg-blue-500 text-white px-4 py-1 rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:hover:bg-blue-500"
         >
           Connect
         </button>
@@ -306,7 +306,7 @@ export default function Room() {
           id="capture"
           onClick={capture}
           disabled={localVideo !== undefined || !connected}
-          className="bg-blue-500 text-white px-4 py-1 rounded-md hover:bg-blue-600"
+          className="bg-blue-500 text-white px-4 py-1 rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:hover:bg-blue-500"
         >
           Capture
         </button>
@@ -327,7 +327,8 @@ export default function Room() {
         <button
           id="restart"
           onClick={restart}
-          className="bg-yellow-500 text-white px-4 py-1 rounded-md hover:bg-yellow-600"
+          disabled={!connected}
+          className="bg-yellow-500 text-white px-4 py-1 rounded-md hover:bg-yellow-600 disabled:opacity-50 disabled:hover:bg-yellow-500"
         >
           RestartICE
         </button>
@@ -337,7 +338,7 @@ export default function Room() {
           id="stop"
           onClick={stop}
           disabled={!connected}
-          className="bg-red-500 text-white px-4 py-1 rounded-md hover:bg-red-600"
+          className="bg-red-500 text-white px-4 py-1 rounded-md hover:bg-red-600 disabled:opacity-50 disabled:hover:bg-red-500"
         >
           Stop
         </button>
