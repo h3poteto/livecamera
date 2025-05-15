@@ -1784,9 +1784,9 @@ dependencies = [
 
 [[package]]
 name = "rheomesh"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc74ae5310f3954c26dc66ba80ec2e1b74e656e766a070778694e612f9cff6c8"
+checksum = "44c1ffec1e53a7ae9fd26e5898099c3b0eb93e72eee887352c7121a35367431c"
 dependencies = [
  "bitvec",
  "bytes",

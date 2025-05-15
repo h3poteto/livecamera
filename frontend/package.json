@@ -10,7 +10,7 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "rheomesh": "0.4.0",
+    "rheomesh": "0.4.1",
     "next": "^15.3.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
