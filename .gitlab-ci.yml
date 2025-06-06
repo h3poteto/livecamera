@@ -3,6 +3,9 @@ stages:
   - image
   - release
 
+include:
+  - component: gitlab.com/to-be-continuous/renovate/gitlab-ci-renovate@1.2.0
+
 variables:
   AWS_DEFAULT_REGION: ap-northeast-1
   ECR_REGISTRY: public.ecr.aws/e6v1e3g2
