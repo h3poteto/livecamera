@@ -1,6 +1,7 @@
 stages:
   - build
   - image
+  - release
 
 variables:
   AWS_DEFAULT_REGION: ap-northeast-1
@@ -100,3 +101,31 @@ image-frontend:
       else
         echo "Skipping push"
       fi
+
+pull_request:
+  stage: release
+  image: ubuntu:latest
+  only:
+    - master
+  before_script:
+    - apt-get update
+    - apt-get install -y curl tar git
+    - curl -sSLf https://github.com/github/hub/releases/download/v2.14.2/hub-linux-amd64-2.14.2.tgz | tar zxf - --strip-components=1 -C /tmp/ && mv /tmp/bin/hub /usr/local/bin/hub
+    - hub --version
+    - curl -sSLf https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.5.7/kustomize_v4.5.7_linux_amd64.tar.gz | tar zxf - -C /tmp/ && mv /tmp/kustomize /usr/local/bin/kustomize
+    - kustomize version
+  script:
+    - |
+      git config --global user.name h3poteto
+      git config --global user.email h3.poteto@gmail.com
+    - git clone https://h3poteto:${GITHUB_TOKEN}@github.com/h3poteto/k8s-services.git
+    - cd k8s-services
+    - git init
+    - git checkout -b update-livecamera-image-${IMAGE_TAG}
+    - cd raspberry/services/livecamera
+    - kustomize edit set image "livecamera-server=${ECR_REGISTRY}/${SERVER_REPOSITORY}:${IMAGE_TAG}"
+    - kustomize edit set image "livecamera-frontend=${ECR_REGISTRY}/${FRONTEND_REPOSITORY}:${IMAGE_TAG}"
+    - git add .
+    - git commit -m "Update docker image for livecamera to ${IMAGE_TAG}"
+    - git push --set-upstream origin update-livecamera-image-${IMAGE_TAG}
+    - hub pull-request -m "[Image update] livecamera ${IMAGE_TAG}"
