@@ -1,0 +1,79 @@
+stages:
+  - build
+
+variables:
+  AWS_DEFAULT_REGION: ap-northeast-1
+  ECR_REGISTRY: public.ecr.aws/e6v1e3g2
+  SERVER_REPOSITORY: h3poteto/livecamera-server
+  FRONTEND_REPOSITORY: h3poteto/livecamera-frontend
+  IMAGE_TAG: $CI_COMMIT_SHA
+  AWS_ROLE_ARN: arn:aws:iam::564677439943:role/gitlab-ci-ecr
+
+build-server:
+  stage: build
+  image: docker:latest
+  only:
+    - merge_requests
+    - master
+  services:
+    - docker:dind
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: https://gitlab.com
+  before_script:
+    - apk add --no-cache curl aws-cli
+    - >
+      aws_sts_output=$(aws sts assume-role-with-web-identity
+      --role-arn ${AWS_ROLE_ARN}
+      --role-session-name "GitLabRunner-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
+      --web-identity-token ${GITLAB_OIDC_TOKEN}
+      --duration-seconds 3600
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
+      --output text)
+    - export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $aws_sts_output)
+    - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+  script:
+    - cd server
+    - docker build -t $ECR_REGISTRY/$SERVER_REPOSITORY:$IMAGE_TAG .
+    - docker tag $ECR_REGISTRY/$SERVER_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$SERVER_REPOSITORY:latest
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "master" ]; then
+        docker push $ECR_REGISTRY/$SERVER_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$SERVER_REPOSITORY:latest
+      else
+        echo "Skipping push"
+      fi
+
+build-frontend:
+  stage: build
+  image: docker:latest
+  only:
+    - merge_requests
+  services:
+    - docker:dind
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: https://gitlab.com
+  before_script:
+    - apk add --no-cache curl aws-cli
+    - >
+      aws_sts_output=$(aws sts assume-role-with-web-identity
+      --role-arn ${AWS_ROLE_ARN}
+      --role-session-name "GitLabRunner-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
+      --web-identity-token ${GITLAB_OIDC_TOKEN}
+      --duration-seconds 3600
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
+      --output text)
+    - export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $aws_sts_output)
+    - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+  script:
+    - cd frontend
+    - docker build -t $ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG .
+    - docker tag $ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$FRONTEND_REPOSITORY:latest
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "master" ]; then
+        docker push $ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$FRONTEND_REPOSITORY:latest
+      else
+        echo "Skipping push"
+      fi
