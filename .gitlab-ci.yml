@@ -49,6 +49,7 @@ build-frontend:
   image: docker:latest
   only:
     - merge_requests
+    - master
   services:
     - docker:dind
   id_tokens:
