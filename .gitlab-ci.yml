@@ -1,5 +1,6 @@
 stages:
   - build
+  - image
 
 variables:
   AWS_DEFAULT_REGION: ap-northeast-1
@@ -11,6 +12,27 @@ variables:
 
 build-server:
   stage: build
+  image: rust:latest
+  only:
+    - merge_requests
+  script:
+    - cd server
+    - cargo build --verbose
+    - cargo test --verbose
+
+build-frontend:
+  stage: build
+  image: node:22
+  only:
+    - merge_requests
+  script:
+    - cd frontend
+    - npm install
+    - npm run build
+    - npm run typecheck
+
+image-server:
+  stage: image
   image: docker:latest
   only:
     - merge_requests
@@ -44,8 +66,8 @@ build-server:
         echo "Skipping push"
       fi
 
-build-frontend:
-  stage: build
+image-frontend:
+  stage: image
   image: docker:latest
   only:
     - merge_requests
