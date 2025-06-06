@@ -2,6 +2,7 @@ stages:
   - build
   - image
   - release
+  - test
 
 include:
   - component: gitlab.com/to-be-continuous/renovate/gitlab-ci-renovate@1.2.0
