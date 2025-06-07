@@ -2,10 +2,6 @@ stages:
   - build
   - image
   - release
-  - test
-
-include:
-  - component: gitlab.com/to-be-continuous/renovate/gitlab-ci-renovate@1.2.0
 
 variables:
   AWS_DEFAULT_REGION: ap-northeast-1
@@ -18,9 +14,8 @@ variables:
 build-server:
   stage: build
   image: rust:latest
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE != "schedule" && $CI_COMMIT_BRANCH
+  only:
+    - merge_requests
   script:
     - cd server
     - cargo build --verbose
@@ -29,9 +24,8 @@ build-server:
 build-frontend:
   stage: build
   image: node:22
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE != "schedule" && $CI_COMMIT_BRANCH
+  only:
+    - merge_requests
   script:
     - cd frontend
     - npm install
@@ -41,9 +35,8 @@ build-frontend:
 image-server:
   stage: image
   image: docker:latest
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"
+  only:
+    - master
   services:
     - docker:dind
   id_tokens:
@@ -76,9 +69,8 @@ image-server:
 image-frontend:
   stage: image
   image: docker:latest
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"
+  only:
+    - master
   services:
     - docker:dind
   id_tokens:
@@ -111,8 +103,8 @@ image-frontend:
 pull_request:
   stage: release
   image: ubuntu:latest
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"
+  only:
+    - master
   before_script:
     - apt-get update
     - apt-get install -y curl tar git
