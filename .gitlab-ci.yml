@@ -20,6 +20,8 @@ build-server:
   image: rust:latest
   only:
     - merge_requests
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
   script:
     - cd server
     - cargo build --verbose
@@ -30,6 +32,8 @@ build-frontend:
   image: node:22
   only:
     - merge_requests
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
   script:
     - cd frontend
     - npm install
@@ -42,6 +46,8 @@ image-server:
   only:
     - merge_requests
     - master
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
   services:
     - docker:dind
   id_tokens:
@@ -77,6 +83,8 @@ image-frontend:
   only:
     - merge_requests
     - master
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
   services:
     - docker:dind
   id_tokens:
@@ -111,6 +119,8 @@ pull_request:
   image: ubuntu:latest
   only:
     - master
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
   before_script:
     - apt-get update
     - apt-get install -y curl tar git
