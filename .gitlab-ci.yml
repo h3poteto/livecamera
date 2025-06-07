@@ -23,7 +23,7 @@ build-server:
 
 build-frontend:
   stage: build
-  image: node:22
+  image: node:22.16.0
   only:
     - merge_requests
   script:
