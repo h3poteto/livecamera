@@ -1,0 +1,156 @@
+name: Docker
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+on:
+  push:
+    branches: [ master ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+
+jobs:
+  server:
+    env:
+      # Use docker.io for Docker Hub if empty
+      REGISTRY: ghcr.io
+      # github.repository as <account>/<repo>
+      IMAGE_NAME: h3poteto/livecamera-server
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+  frontend:
+    env:
+      # Use docker.io for Docker Hub if empty
+      REGISTRY: ghcr.io
+      # github.repository as <account>/<repo>
+      IMAGE_NAME: h3poteto/livecamera-frontend
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+
+  release:
+    name: Create release PR
+    needs: [server, frontend]
+    runs-on: ubuntu-latest
+
+    env:
+      SERVER_IMAGE: ghcr.io/h3poteto/livecamera-server
+      FRONTEND_IMAGE: ghcr.io/h3poteto/livecamera-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install hub
+        run: |
+          curl -sSLf https://github.com/github/hub/releases/download/v2.14.2/hub-linux-amd64-2.14.2.tgz | \
+          tar zxf - --strip-components=1 -C /tmp/ && \
+          sudo mv /tmp/bin/hub /usr/local/bin/hub
+          hub --version
+      - name: Install kustomize
+        run: |
+          curl -sSLf https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.5.7/kustomize_v4.5.7_linux_amd64.tar.gz | \
+          tar zxf - -C /tmp/ && \
+          sudo mv /tmp/kustomize /usr/local/bin/kustomize
+          kustomize version
+      - name: Update tag and create PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          git config --global user.name h3poteto
+          git config --global user.email ${{ secrets.EMAIL }}
+          git clone https://h3poteto:${{ secrets.TOKEN }}@github.com/h3poteto/k8s-services.git
+          cd k8s-services
+          git init
+          git checkout -b update-livecamera-image-${{ github.sha }}
+          cd raspberry/services/livecamera
+          kustomize edit set image "livecamera-server=${{ env.SERVER_IMAGE }}:sha-${{ github.sha }}"
+          kustomize edit set image "livecamera-frontend=${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}"
+          git add .
+          git commit -m "Update docker image for livecamera to ${{ github.sha }}"
+          git push --set-upstream origin update-livecamera-image-${{ github.sha }}
+          hub pull-request -m "[Image update] livecamera ${{ github.sha }}"
