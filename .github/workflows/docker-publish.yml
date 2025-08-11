@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
@@ -76,7 +76,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
@@ -124,7 +124,7 @@ jobs:
       FRONTEND_IMAGE: ghcr.io/h3poteto/livecamera-frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install hub
         run: |
           curl -sSLf https://github.com/github/hub/releases/download/v2.14.2/hub-linux-amd64-2.14.2.tgz | \
